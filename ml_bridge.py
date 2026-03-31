@@ -100,12 +100,12 @@ def start_firebase_listener():
     db.reference('sensorData').listen(predict_and_sync)
 
 # --- 5. MAIN EXECUTION ---
+# Start the Firebase sync thread (runs whether using python or gunicorn)
+sync_thread = threading.Thread(target=start_firebase_listener, daemon=True)
+sync_thread.start()
+
 if __name__ == "__main__":
-    # Start the Firebase sync thread
-    sync_thread = threading.Thread(target=start_firebase_listener, daemon=True)
-    sync_thread.start()
-    
-    # Start the Flask Health Check server (Render will send requests here)
+    # Start the Flask Health Check server locally (Render will use gunicorn)
     port = int(os.environ.get("PORT", 5000))
     print(f"INFO: Starting Health Check server on port {port}...")
     app.run(host='0.0.0.0', port=port)
