@@ -1,0 +1,32 @@
+# --- Firebase Keys (CRITICAL: DO NOT DELETE) ---
+serviceAccountKey.json
+
+# --- Python Environment ---
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Model & Data ---
+# If you ever have massive dataset CSVs, you might want to add them here.
+# For now, we keep yield_model.pkl so Render can find it.
+
+# --- Mobile App Node Modules ---
+node_modules/
+.expo/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- IDE Settings ---
+.vscode/
+.idea/
+.project
+.settings/
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db

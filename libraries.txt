@@ -1,0 +1,4 @@
+Firebase ESP Client
+ArduinoJson
+DHT sensor library
+Adafruit Unified Sensor
