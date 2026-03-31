@@ -1,80 +1,87 @@
 #include <WiFi.h>
-#include <Firebase_ESP_Client.h>
-#include <addons/RTDBHelper.h>
+#include <HTTPClient.h>
+#include <DHTesp.h>
 
-// ─── CREDENTIALS (FROM YOUR PROJECT) ──────────────────────────────────────────
+// ─── SETTINGS ────────────────────────────────────────────────────────────────
 #define WIFI_SSID "Wokwi-GUEST"
 #define WIFI_PASSWORD ""
-#define API_KEY "AIzaSyB203V6rxUVAD_NH8KsN_eMUdp2JrcEcj8"
-#define DATABASE_URL "https://soilplant-fe521-default-rtdb.asia-southeast1.firebasedatabase.app/"
+#define DATABASE_URL "https://soilplant-fe521-default-rtdb.asia-southeast1.firebasedatabase.app"
 
-// ─── DEVICE CONFIG ────────────────────────────────────────────────────────────
-FirebaseData fbdo;
-FirebaseAuth auth;
-FirebaseConfig config;
+// ─── PINS ───────────────────────────────────────────────────────────────────
+#define DHT_PIN         15   // DHT22 (Temp/Hum)
+#define MOISTURE_PIN    32   // LDR (Moisture Proxy)
+#define CHLOROPHYLL_PIN 33   // Pot 3 (Bio Mass/Chlorophyll)
+#define TURBIDITY_PIN   34   // Pot 1 (Microplast Conc/Turbidity)
+#define PH_PIN          35   // Pot 2 (Soil pH)
+
+DHTesp dht;
 
 void setup() {
   Serial.begin(115200);
+  delay(1000);
+  Serial.println("\n\n--- ESP32 Soil-Plant Monitor Starting ---");
 
-  // 1. WiFi Connection
+  dht.setup(DHT_PIN, DHTesp::DHT22);
+
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("Connecting to WiFi");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("\n✅ WiFi Connected!");
-
-  // 2. Firebase Configuration
-  config.api_key = API_KEY;
-  config.database_url = DATABASE_URL;
-
-  // Sign up as anonymous user (Simplest for simulation)
-  if (Firebase.signUp(&config, &auth, "", "")) {
-    Serial.println("✅ Firebase Authenticated!");
-  } else {
-    Serial.printf("❌ Auth Error: %s\n", config.signer.signupError.message.c_str());
-  }
-
-  Firebase.begin(&config, &auth);
-  Firebase.reconnectWiFi(true);
+  Serial.println("\nWiFi Connected!");
+  Serial.print("IP: ");
+  Serial.println(WiFi.localIP());
 }
 
 void loop() {
-  if (Firebase.ready()) {
-    // 3. Simulating Sensor Readings from Analog Pins
-    float moisture = (analogRead(34) / 4095.0) * 100.0;
-    float ph = (analogRead(35) / 4095.0) * 14.0;
-    float chlorophyll = (analogRead(33) / 4095.0) * 100.0;
-    float turbidity = (analogRead(32) / 4095.0) * 100.0;
+  if (WiFi.status() == WL_CONNECTED) {
+    // 1. Read real values from dedicated pins
+    float moisture = (analogRead(MOISTURE_PIN) / 4095.0) * 100.0;
+    float ph = (analogRead(PH_PIN) / 4095.0) * 14.0;
+    float chlorophyll = (analogRead(CHLOROPHYLL_PIN) / 4095.0) * 100.0;
+    float turbidity = (analogRead(TURBIDITY_PIN) / 4095.0) * 100.0;
     
-    // Simulating Temp & Humidity (since they aren't on analog pins)
-    float temp = 25.0 + (random(0, 100) / 10.0);
-    float hum = 60.0 + (random(0, 100) / 10.0);
+    // 2. Read Temp/Hum from DHT22
+    TempAndHumidity tah = dht.getTempAndHumidity();
+    float temp = !isnan(tah.temperature) ? tah.temperature : 28.5;
+    float hum = !isnan(tah.humidity) ? tah.humidity : 65.0;
 
-    // 4. Update the "sensorData" path in Firebase
-    FirebaseJson data;
-    data.set("temperature", temp);
-    data.set("humidity", hum);
-    data.set("soilMoisture", moisture);
-    data.set("soilPH", ph);
-    data.set("chlorophyll", chlorophyll);
-    data.set("turbidity", turbidity);
-    data.set("timestamp", millis()); // Or server timestamp
+    // 3. Build JSON string manually
+    String json = "{";
+    json += "\"temperature\":" + String(temp, 1) + ",";
+    json += "\"humidity\":" + String(hum, 1) + ",";
+    json += "\"soilMoisture\":" + String(moisture, 1) + ",";
+    json += "\"soilPH\":" + String(ph, 1) + ",";
+    json += "\"chlorophyll\":" + String(chlorophyll, 1) + ",";
+    json += "\"turbidity\":" + String(turbidity, 1) + ",";
+    json += "\"timestamp\":" + String(millis());
+    json += "}";
 
-    Serial.println("\n📡 Sending data to Firebase...");
-    if (Firebase.RTDB.setJSON(&fbdo, "/sensorData", &data)) {
-      Serial.println("✅ Data sent successfully!");
+    // 4. Send to Firebase via REST API (PUT = overwrite sensorData)
+    HTTPClient http;
+    String url = String(DATABASE_URL) + "/sensorData.json";
+    http.begin(url);
+    http.addHeader("Content-Type", "application/json");
+
+    Serial.println("\nSending data to Firebase...");
+    int httpCode = http.PUT(json);
+
+    if (httpCode == 200) {
+      Serial.println("Data sent successfully!");
     } else {
-      Serial.printf("❌ Failed to send: %s\n", fbdo.errorReason().c_str());
+      Serial.print("Failed! HTTP Code: ");
+      Serial.println(httpCode);
     }
+    http.end();
 
     Serial.println("---- SENSOR DATA ----");
-    Serial.printf("Temp: %.1fC | Hum: %.1f%%\n", temp, hum);
-    Serial.printf("Moisture: %.1f%% | pH: %.1f\n", moisture, ph);
-    Serial.printf("Chlorophyll: %.1f | Turbidity: %.1f\n", chlorophyll, turbidity);
+    Serial.print("Temp: "); Serial.print(temp, 1); Serial.print("C | Hum: "); Serial.print(hum, 1); Serial.println("%");
+    Serial.print("Moisture: "); Serial.print(moisture, 1); Serial.print("% | pH: "); Serial.println(ph, 1);
+    Serial.print("Chlorophyll: "); Serial.print(chlorophyll, 1); Serial.print(" | Turbidity: "); Serial.println(turbidity, 1);
     Serial.println("---------------------");
   }
 
-  delay(40000); // Send data every 40 seconds
+  // Rapid update for demo (5 seconds)
+  delay(5000);
 }

@@ -223,22 +223,30 @@ def compute_farm_health(data, yield_loss):
 
 # --- 7. ML PREDICTION + FULL SYNC LOGIC ---
 def predict_and_sync(event):
-    if event.data:
-        data = event.data
-        # Skip if it's just a single field update (not the full object)
-        if not isinstance(data, dict) or 'temperature' not in data:
+    """
+    Called whenever /sensorData is updated in Firebase.
+    event.data contains the new data.
+    """
+    if event.data is not None:
+        # Get the full current state of sensor data
+        # (This avoids issues if the event is only a partial update)
+        data = db.reference('sensorData').get()
+        
+        if not data or not isinstance(data, dict) or 'temperature' not in data:
+            print(f"INFO: Incomplete sensor data received: {data}")
             return
 
-        print(f"INPUT: New sensor data received: {data}")
+        print(f"INPUT: Processing sensor data: {data}")
 
         try:
+            # Build feature row for model
             features = pd.DataFrame([{
-                'temperature': data.get('temperature', 28.0),
-                'humidity': data.get('humidity', 60.0),
-                'soilMoisture': data.get('soilMoisture', 50.0),
-                'soilPH': data.get('soilPH', 6.5),
-                'chlorophyll': data.get('chlorophyll', 42.0),
-                'turbidity': data.get('turbidity', 0.0)
+                'temperature': float(data.get('temperature', 28.0)),
+                'humidity': float(data.get('humidity', 60.0)),
+                'soilMoisture': float(data.get('soilMoisture', 50.0)),
+                'soilPH': float(data.get('soilPH', 6.5)),
+                'chlorophyll': float(data.get('chlorophyll', 42.0)),
+                'turbidity': float(data.get('turbidity', 0.0))
             }])
 
             # Predict Yield Loss
