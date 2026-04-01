@@ -223,91 +223,82 @@ def compute_farm_health(data, yield_loss):
 
 # --- 7. ML PREDICTION + FULL SYNC LOGIC ---
 # --- 7. ML PREDICTION + FULL SYNC LOGIC ---
-def predict_and_sync(event):
+
+def process_latest_data():
     """
-    Triggered by Firebase updates. Processes data and syncs results.
+    Core inference logic: Polls Firebase, predicts, and syncs results.
     """
-    try:
-        # 1. Fetch Latest Data
-        data = db.reference('sensorData').get()
-        if not data or 'temperature' not in data:
-            return
+    last_processed_ts = 0
 
-        # 2. Strict Feature Ordering (Matches train_model.py exactly)
-        feature_order = ['temperature', 'humidity', 'soilMoisture', 'soilPH', 'chlorophyll', 'turbidity']
+    print("INFO: Polling loop started. Waiting for sensor updates...")
+    
+    while True:
+        try:
+            # 1. Fetch Latest Data
+            data = db.reference('sensorData').get()
+            
+            if not data or 'temperature' not in data:
+                time.sleep(3)
+                continue
+
+            # 2. Check if this is NEW data (avoid redundant processing)
+            current_ts = data.get('timestamp', 0)
+            if current_ts == last_processed_ts:
+                time.sleep(2)
+                continue
+            
+            last_processed_ts = current_ts
+
+            # 3. Predict Yield Loss with Strict Feature Ordering
+            feature_order = ['temperature', 'humidity', 'soilMoisture', 'soilPH', 'chlorophyll', 'turbidity']
+            input_data = {f: float(data.get(f, 0.0)) for f in feature_order}
+            
+            features_df = pd.DataFrame([input_data])[feature_order]
+            prediction = float(model.predict(features_df)[0])
+            
+            risk_level = "Low"
+            if prediction > 35: risk_level = "Critical"
+            elif prediction > 20: risk_level = "High"
+            elif prediction > 10: risk_level = "Medium"
+
+            # 4. Sync Everything Back to Firebase
+            now = int(time.time() * 1000)
+            
+            # Yield info
+            db.reference('yieldPrediction').set({
+                'yieldLoss': prediction,
+                'riskLevel': risk_level,
+                'timestamp': now
+            })
+
+            # Health Score
+            health = compute_farm_health(input_data, prediction)
+            db.reference('farmHealth').set(health)
+
+            # Active Alerts
+            alerts = generate_alerts(input_data)
+            db.reference('alerts').set(alerts if alerts else {})
+
+            # Recommendations
+            recs = generate_recommendations(input_data, prediction, risk_level)
+            db.reference('recommendations').set(recs)
+
+            # History
+            db.reference('sensorHistory').push({**input_data, 'yieldLoss': prediction, 'timestamp': now})
+
+            print(f"[{time.strftime('%H:%M:%S')}] OK: Predicted {prediction:.2f}% (T:{input_data['temperature']} pH:{input_data['soilPH']})")
+
+        except Exception as e:
+            print(f"[{time.strftime('%H:%M:%S')}] ERROR: {e}")
         
-        input_data = {}
-        for feat in feature_order:
-            val = data.get(feat)
-            input_data[feat] = float(val) if val is not None else 0.0
-
-        # Create DataFrame and enforce column order
-        features_df = pd.DataFrame([input_data])[feature_order]
-
-        # 3. Inference
-        prediction = float(model.predict(features_df)[0])
-        
-        risk_level = "Low"
-        if prediction > 30: risk_level = "High"
-        elif prediction > 15: risk_level = "Medium"
-
-        # 4. Sync Everything
-        timestamp = int(time.time() * 1000)
-        
-        # Yield Prediction
-        db.reference('yieldPrediction').set({
-            'yieldLoss': prediction,
-            'riskLevel': risk_level,
-            'timestamp': timestamp
-        })
-
-        # Farm Health
-        health = compute_farm_health(input_data, prediction)
-        db.reference('farmHealth').set(health)
-
-        # Alerts
-        alerts = generate_alerts(input_data)
-        db.reference('alerts').set(alerts if alerts else {})
-
-        # Recommendations
-        recs = generate_recommendations(input_data, prediction, risk_level)
-        db.reference('recommendations').set(recs)
-
-        # History Management (Limit to latest 50 logs)
-        history_ref = db.reference('sensorHistory')
-        history_ref.push({**input_data, 'yieldLoss': prediction, 'timestamp': timestamp})
-        
-        # Periodic cleanup of history (every 10 updates)
-        if timestamp % 10 == 0:
-            all_history = history_ref.get()
-            if all_history and len(all_history) > 50:
-                # Keep only most recent
-                sorted_keys = sorted(all_history.keys(), key=lambda x: all_history[x].get('timestamp', 0))
-                for old_key in sorted_keys[:-50]:
-                    history_ref.child(old_key).delete()
-
-        print(f"[{time.strftime('%H:%M:%S')}] SYNCED: Loss {prediction:.2f}% | Health {health['score']}")
-
-    except Exception as e:
-        print(f"ERROR in predict_and_sync: {e}")
+        time.sleep(3) # Check every 3 seconds
 
 # --- 8. MAIN EXECUTION ---
-def run_bridge():
-    print("INFO: ML Bridge is active. Listening for changes...")
-    db.reference('sensorData').listen(predict_and_sync)
-    
-    # Render keep-alive / backup sync (checks every 30s in case stream stalls)
-    while True:
-        time.sleep(30)
-        # Heartbeat check
-        predict_and_sync(None)
-
 if __name__ == "__main__":
-    # Start the bridge in a dedicated thread
-    bridge_thread = threading.Thread(target=run_bridge, daemon=True)
-    bridge_thread.start()
+    # Start the polling logic in a background thread
+    threading.Thread(target=process_latest_data, daemon=True).start()
 
-    # Flask server for Render port binding
+    # Flask server for Render (Keep-alive and health check)
     port = int(os.environ.get("PORT", 5000))
-    print(f"INFO: Starting Health Check server on port {port}...")
+    print(f"INFO: Monitoring Server Starting on Port {port}...")
     app.run(host='0.0.0.0', port=port)
