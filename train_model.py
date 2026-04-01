@@ -12,22 +12,22 @@ import os
 def generate_synthetic_data(samples=1000): # Reduced samples for faster local execution
     np.random.seed(42)
     
-    # Randomly generate sensor features
-    temp = np.random.uniform(15, 45, samples)
-    humidity = np.random.uniform(30, 95, samples)
-    moisture = np.random.uniform(10, 90, samples)
-    ph = np.random.uniform(4.0, 9.0, samples)
-    chlorophyll = np.random.uniform(10, 80, samples)
-    turbidity = np.random.uniform(0, 100, samples) # Proxy for microplastics
+    # Randomly generate sensor features - EXPANDED RANGES
+    temp = np.random.uniform(0, 50, samples)            # 0 to 50C
+    humidity = np.random.uniform(0, 100, samples)       # 0 to 100%
+    moisture = np.random.uniform(0, 100, samples)       # 0 to 100%
+    ph = np.random.uniform(0, 14.0, samples)            # 0 to 14 pH
+    chlorophyll = np.random.uniform(0, 100, samples)    # 0 to 100
+    turbidity = np.random.uniform(0, 100, samples)      # 0 to 100
     
     # yield_loss formula (physiological coupling logic)
     yield_loss = (
-        (abs(temp - 28) * 0.5) +          # Temp deviation from optimal 28C
-        (abs(ph - 6.5) * 1.5) +           # pH deviation from optimal 6.5
-        ((100 - moisture) * 0.2) +        # Low moisture adds to loss
-        (turbidity * 0.3) +               # Microplastics (high turbidity) = direct loss
-        ((80 - chlorophyll) * 0.4) +      # Low chlorophyll = yield reduction
-        np.random.normal(0, 2, samples)   # Random noise
+        (abs(temp - 25) * 0.8) +          # Higher penalty for temp dev
+        (abs(ph - 7.0) * 2.0) +           # Higher penalty for pH dev
+        ((100 - moisture) * 0.3) +        # Moisture impact
+        (turbidity * 0.4) +               # Microplastics impact
+        ((100 - chlorophyll) * 0.5) +     # Chlorophyll impact
+        np.random.normal(0, 1, samples)   # Lower noise for cleaner demo
     )
     
     yield_loss = np.clip(yield_loss, 0, 100)
