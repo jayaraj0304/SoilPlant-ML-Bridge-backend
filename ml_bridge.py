@@ -306,12 +306,12 @@ def process_latest_data():
         
         time.sleep(3) # Check every 3 seconds
 
-# --- 8. MAIN EXECUTION ---
-if __name__ == "__main__":
-    # Start the polling logic in a background thread
-    threading.Thread(target=process_latest_data, daemon=True).start()
+# --- 8. GLOBAL STARTUP ---
+# Start the polling logic as soon as the module is loaded (Critical for Render/Gunicorn)
+threading.Thread(target=process_latest_data, daemon=True).start()
 
-    # Flask server for Render (Keep-alive and health check)
+if __name__ == "__main__":
+    # Flask server for manual local testing
     port = int(os.environ.get("PORT", 5000))
     print(f"INFO: Monitoring Server Starting on Port {port}...")
     app.run(host='0.0.0.0', port=port)
