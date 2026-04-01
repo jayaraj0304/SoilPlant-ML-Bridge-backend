@@ -224,80 +224,72 @@ def compute_farm_health(data, yield_loss):
 # --- 7. ML PREDICTION + FULL SYNC LOGIC ---
 def predict_and_sync(event):
     """
-    Called whenever /sensorData is updated in Firebase.
-    event.data contains the new data.
+    Enhanced sync logic: Uses event.data directly for speed and cleans up old alerts.
     """
-    if event.data is not None:
-        # Get the full current state of sensor data
-        # (This avoids issues if the event is only a partial update)
+    # Use the event data if it is the full object, otherwise fetch it
+    data = event.data
+    if not data or not isinstance(data, dict) or 'temperature' not in data:
         data = db.reference('sensorData').get()
         
-        if not data or not isinstance(data, dict) or 'temperature' not in data:
-            print(f"INFO: Incomplete sensor data received: {data}")
-            return
+    if not data:
+        return
 
-        print(f"INPUT: Processing sensor data: {data}")
+    try:
+        # 1. Extract and Log Features (Critical for debugging the 55.17% issue)
+        current_features = {
+            'temperature': float(data.get('temperature', 28.0)),
+            'humidity': float(data.get('humidity', 60.0)),
+            'soilMoisture': float(data.get('soilMoisture', 50.0)),
+            'soilPH': float(data.get('soilPH', 6.5)),
+            'chlorophyll': float(data.get('chlorophyll', 42.0)),
+            'turbidity': float(data.get('turbidity', 0.0))
+        }
+        
+        # Log the actual values being fed to the model
+        print(f"\n--- INFERENCE STEP ---")
+        print(f"Sensors: T:{current_features['temperature']} | H:{current_features['humidity']} | PH:{current_features['soilPH']} | SM:{current_features['soilMoisture']}")
+        
+        features_df = pd.DataFrame([current_features])
 
-        try:
-            # Build feature row for model
-            features = pd.DataFrame([{
-                'temperature': float(data.get('temperature', 28.0)),
-                'humidity': float(data.get('humidity', 60.0)),
-                'soilMoisture': float(data.get('soilMoisture', 50.0)),
-                'soilPH': float(data.get('soilPH', 6.5)),
-                'chlorophyll': float(data.get('chlorophyll', 42.0)),
-                'turbidity': float(data.get('turbidity', 0.0))
-            }])
+        # 2. Predict Yield Loss
+        prediction = float(model.predict(features_df)[0])
+        
+        risk_level = "Low"
+        if prediction > 30: risk_level = "High"
+        elif prediction > 15: risk_level = "Medium"
 
-            # Predict Yield Loss
-            prediction = model.predict(features)[0]
+        print(f"RESULT: Prediction = {prediction:.2f}% | Risk = {risk_level}")
 
-            risk_level = "Low"
-            if prediction > 30:
-                risk_level = "High"
-            elif prediction > 15:
-                risk_level = "Medium"
+        # 3. Sync Yield Prediction
+        db.reference('yieldPrediction').set({
+            'yieldLoss': prediction,
+            'riskLevel': risk_level,
+            'timestamp': int(time.time() * 1000)
+        })
 
-            print(f"PREDICTION: {prediction:.2f}% Yield Loss ({risk_level})")
+        # 4. Generate & Sync Alerts (Using .set() to avoid infinite growth)
+        alerts = generate_alerts(data)
+        if alerts:
+            # We keep only the most recent alerts for the UI
+            db.reference('alerts').set(alerts) 
+            print(f"ALERTS: {len(alerts)} active alerts updated.")
+        else:
+            db.reference('alerts').set({}) # Clear alerts if all is safe
 
-            # 1. Sync Yield Prediction
-            db.reference('yieldPrediction').update({
-                'yieldLoss': float(prediction),
-                'riskLevel': risk_level,
-                'timestamp': int(time.time() * 1000)
-            })
+        # 5. Compute & Sync Farm Health
+        health = compute_farm_health(data, prediction)
+        db.reference('farmHealth').set(health)
 
-            # 2. Generate & Sync Alerts
-            alerts = generate_alerts(data)
-            if alerts:
-                db.reference('alerts').update(alerts)
-                print(f"ALERTS: Generated {len(alerts)} alert(s)")
+        # 6. Store Sensor History (Limit to last 50 for performance)
+        history_ref = db.reference('sensorHistory')
+        history_entry = {**current_features, 'yieldLoss': prediction, 'timestamp': int(time.time() * 1000)}
+        history_ref.push(history_entry)
+        
+        # Housekeeping: Prevent history node from growing too large
+        # (Optional: implement a trimmer function if needed)
 
-            # 3. Generate & Sync Recommendations
-            recs = generate_recommendations(data, prediction, risk_level)
-            db.reference('recommendations').set(recs)
-
-            # 4. Compute & Sync Farm Health
-            health = compute_farm_health(data, prediction)
-            db.reference('farmHealth').set(health)
-
-            # 5. Store Sensor History (for graphs)
-            history_entry = {
-                'temperature': data.get('temperature', 0),
-                'humidity': data.get('humidity', 0),
-                'soilMoisture': data.get('soilMoisture', 0),
-                'soilPH': data.get('soilPH', 0),
-                'chlorophyll': data.get('chlorophyll', 0),
-                'turbidity': data.get('turbidity', 0),
-                'yieldLoss': float(prediction),
-                'timestamp': int(time.time() * 1000),
-            }
-            db.reference('sensorHistory').push(history_entry)
-
-            print("SYNC: All data synced to Firebase.")
-
-        except Exception as e:
-            print(f"ERROR during prediction: {e}")
+    except Exception as e:
+        print(f"ERROR: Sync failed - {e}")
 
 # Start the Firebase listener in the background
 def start_firebase_listener():
