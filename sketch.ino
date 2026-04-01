@@ -173,6 +173,6 @@ void loop() {
     Serial.println("---------------------");
   }
 
-  // Rapid update for demo (5 seconds)
-  delay(5000);
+  // Faster update for demo (1 second)
+  delay(1000);
 }
