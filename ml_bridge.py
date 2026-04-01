@@ -304,7 +304,7 @@ def process_latest_data():
             except:
                 pass
         
-        time.sleep(3) # Check every 3 seconds
+        time.sleep(0.5) # Check every 0.5 seconds for instant feel!
 
 # --- 8. GLOBAL STARTUP ---
 # Start the polling logic as soon as the module is loaded (Critical for Render/Gunicorn)
