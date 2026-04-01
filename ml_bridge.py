@@ -222,85 +222,92 @@ def compute_farm_health(data, yield_loss):
     }
 
 # --- 7. ML PREDICTION + FULL SYNC LOGIC ---
+# --- 7. ML PREDICTION + FULL SYNC LOGIC ---
 def predict_and_sync(event):
     """
-    Enhanced sync logic: Uses event.data directly for speed and cleans up old alerts.
+    Triggered by Firebase updates. Processes data and syncs results.
     """
-    # Use the event data if it is the full object, otherwise fetch it
-    data = event.data
-    if not data or not isinstance(data, dict) or 'temperature' not in data:
-        data = db.reference('sensorData').get()
-        
-    if not data:
-        return
-
     try:
-        # 1. Extract and Log Features (Critical for debugging the 55.17% issue)
-        current_features = {
-            'temperature': float(data.get('temperature', 28.0)),
-            'humidity': float(data.get('humidity', 60.0)),
-            'soilMoisture': float(data.get('soilMoisture', 50.0)),
-            'soilPH': float(data.get('soilPH', 6.5)),
-            'chlorophyll': float(data.get('chlorophyll', 42.0)),
-            'turbidity': float(data.get('turbidity', 0.0))
-        }
-        
-        # Log the actual values being fed to the model
-        print(f"\n--- INFERENCE STEP ---")
-        print(f"Sensors: T:{current_features['temperature']} | H:{current_features['humidity']} | PH:{current_features['soilPH']} | SM:{current_features['soilMoisture']}")
-        
-        features_df = pd.DataFrame([current_features])
+        # 1. Fetch Latest Data
+        data = db.reference('sensorData').get()
+        if not data or 'temperature' not in data:
+            return
 
-        # 2. Predict Yield Loss
+        # 2. Strict Feature Ordering (Matches train_model.py exactly)
+        feature_order = ['temperature', 'humidity', 'soilMoisture', 'soilPH', 'chlorophyll', 'turbidity']
+        
+        input_data = {}
+        for feat in feature_order:
+            val = data.get(feat)
+            input_data[feat] = float(val) if val is not None else 0.0
+
+        # Create DataFrame and enforce column order
+        features_df = pd.DataFrame([input_data])[feature_order]
+
+        # 3. Inference
         prediction = float(model.predict(features_df)[0])
         
         risk_level = "Low"
         if prediction > 30: risk_level = "High"
         elif prediction > 15: risk_level = "Medium"
 
-        print(f"RESULT: Prediction = {prediction:.2f}% | Risk = {risk_level}")
-
-        # 3. Sync Yield Prediction
+        # 4. Sync Everything
+        timestamp = int(time.time() * 1000)
+        
+        # Yield Prediction
         db.reference('yieldPrediction').set({
             'yieldLoss': prediction,
             'riskLevel': risk_level,
-            'timestamp': int(time.time() * 1000)
+            'timestamp': timestamp
         })
 
-        # 4. Generate & Sync Alerts (Using .set() to avoid infinite growth)
-        alerts = generate_alerts(data)
-        if alerts:
-            # We keep only the most recent alerts for the UI
-            db.reference('alerts').set(alerts) 
-            print(f"ALERTS: {len(alerts)} active alerts updated.")
-        else:
-            db.reference('alerts').set({}) # Clear alerts if all is safe
-
-        # 5. Compute & Sync Farm Health
-        health = compute_farm_health(data, prediction)
+        # Farm Health
+        health = compute_farm_health(input_data, prediction)
         db.reference('farmHealth').set(health)
 
-        # 6. Store Sensor History (Limit to last 50 for performance)
+        # Alerts
+        alerts = generate_alerts(input_data)
+        db.reference('alerts').set(alerts if alerts else {})
+
+        # Recommendations
+        recs = generate_recommendations(input_data, prediction, risk_level)
+        db.reference('recommendations').set(recs)
+
+        # History Management (Limit to latest 50 logs)
         history_ref = db.reference('sensorHistory')
-        history_entry = {**current_features, 'yieldLoss': prediction, 'timestamp': int(time.time() * 1000)}
-        history_ref.push(history_entry)
+        history_ref.push({**input_data, 'yieldLoss': prediction, 'timestamp': timestamp})
         
-        # Housekeeping: Prevent history node from growing too large
-        # (Optional: implement a trimmer function if needed)
+        # Periodic cleanup of history (every 10 updates)
+        if timestamp % 10 == 0:
+            all_history = history_ref.get()
+            if all_history and len(all_history) > 50:
+                # Keep only most recent
+                sorted_keys = sorted(all_history.keys(), key=lambda x: all_history[x].get('timestamp', 0))
+                for old_key in sorted_keys[:-50]:
+                    history_ref.child(old_key).delete()
+
+        print(f"[{time.strftime('%H:%M:%S')}] SYNCED: Loss {prediction:.2f}% | Health {health['score']}")
 
     except Exception as e:
-        print(f"ERROR: Sync failed - {e}")
-
-# Start the Firebase listener in the background
-def start_firebase_listener():
-    print("INFO: ML Bridge started listening for live sensor data...")
-    db.reference('sensorData').listen(predict_and_sync)
+        print(f"ERROR in predict_and_sync: {e}")
 
 # --- 8. MAIN EXECUTION ---
-sync_thread = threading.Thread(target=start_firebase_listener, daemon=True)
-sync_thread.start()
+def run_bridge():
+    print("INFO: ML Bridge is active. Listening for changes...")
+    db.reference('sensorData').listen(predict_and_sync)
+    
+    # Render keep-alive / backup sync (checks every 30s in case stream stalls)
+    while True:
+        time.sleep(30)
+        # Heartbeat check
+        predict_and_sync(None)
 
 if __name__ == "__main__":
+    # Start the bridge in a dedicated thread
+    bridge_thread = threading.Thread(target=run_bridge, daemon=True)
+    bridge_thread.start()
+
+    # Flask server for Render port binding
     port = int(os.environ.get("PORT", 5000))
     print(f"INFO: Starting Health Check server on port {port}...")
     app.run(host='0.0.0.0', port=port)
