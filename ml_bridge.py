@@ -253,6 +253,13 @@ def process_latest_data():
             feature_order = ['temperature', 'humidity', 'soilMoisture', 'soilPH', 'chlorophyll', 'turbidity']
             input_data = {f: float(data.get(f, 0.0)) for f in feature_order}
             
+            # DEBUG: Write exactly what RENDER SEES back to Firebase
+            try:
+                db.reference('debug/renderSeenInputs').set(input_data)
+                db.reference('debug/bridgeStatus').set("Running on Render - OK")
+            except:
+                pass
+
             features_df = pd.DataFrame([input_data])[feature_order]
             prediction = float(model.predict(features_df)[0])
             
@@ -289,7 +296,13 @@ def process_latest_data():
             print(f"[{time.strftime('%H:%M:%S')}] OK: Predicted {prediction:.2f}% (T:{input_data['temperature']} pH:{input_data['soilPH']})")
 
         except Exception as e:
-            print(f"[{time.strftime('%H:%M:%S')}] ERROR: {e}")
+            error_msg = f"[{time.strftime('%H:%M:%S')}] SYNC ERROR: {e}"
+            print(error_msg)
+            # Send error to Firebase so we can debug Render remotely!
+            try:
+                db.reference('debug/lastError').set(error_msg)
+            except:
+                pass
         
         time.sleep(3) # Check every 3 seconds
 
