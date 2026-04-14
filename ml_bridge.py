@@ -16,15 +16,29 @@ app = Flask(__name__)
 def health_check():
     return "ML Yield Prediction Bridge is Online!", 200
 
-# --- 2. LOAD TRAINED ML MODEL ---
-MODEL_PATH = 'models/yield_model.pkl'
-if not os.path.exists(MODEL_PATH):
-    print(f"ERROR: ML Model not found at {MODEL_PATH}")
-    exit()
+# --- 2. LOAD 3-MODEL ENSEMBLE ---
+MODELS = {
+    'yield_loss': 'models/yield_loss_model.pkl',
+    'health': 'models/health_model.pkl',
+    'harvest': 'models/harvest_model.pkl'
+}
 
-with open(MODEL_PATH, 'rb') as f:
-    model = pickle.load(f)
-print("INFO: ML Model loaded successfully!")
+loaded_models = {}
+for name, path in MODELS.items():
+    if os.path.exists(path):
+        with open(path, 'rb') as f:
+            loaded_models[name] = pickle.load(f)
+        print(f"INFO: {name.capitalize()} Model loaded successfully!")
+    else:
+        print(f"ERROR: Model not found at {path}")
+        exit()
+
+# Extract models for easy access
+yield_loss_model = loaded_models['yield_loss']
+health_model_bundle = loaded_models['health'] # Contains 'model' and 'encoder'
+health_model = health_model_bundle['model']
+health_encoder = health_model_bundle['encoder']
+harvest_model = loaded_models['harvest']
 
 # --- 3. INITIALIZE FIREBASE (Securely) ---
 DATABASE_URL = "https://soilplant-fe521-default-rtdb.asia-southeast1.firebasedatabase.app/"
@@ -249,51 +263,73 @@ def process_latest_data():
             
             last_processed_ts = current_ts
 
-            # 3. Predict Yield Loss with Strict Feature Ordering
-            feature_order = ['temperature', 'humidity', 'soilMoisture', 'soilPH', 'chlorophyll', 'turbidity']
-            input_data = {f: float(data.get(f, 0.0)) for f in feature_order}
+            # 3. Predict with 9 Features (Optimized for Microplastic Impact)
+            sim_features = ['temperature', 'humidity', 'soilMoisture', 'soilPH', 'chlorophyll', 'turbidity', 'nitrogen', 'phosphorus', 'potassium']
+            raw_data = {f: float(data.get(f, 0.0)) for f in sim_features}
             
-            # DEBUG: Write exactly what RENDER SEES back to Firebase
-            try:
-                db.reference('debug/renderSeenInputs').set(input_data)
-                db.reference('debug/bridgeStatus').set("Running on Render - OK")
-            except:
-                pass
+            # Map simulation keys to model feature names (Models seen 'N', 'P', 'K' during fit)
+            input_data = {
+                'temperature': raw_data['temperature'],
+                'humidity': raw_data['humidity'],
+                'soilMoisture': raw_data['soilMoisture'],
+                'soilPH': raw_data['soilPH'],
+                'chlorophyll': raw_data['chlorophyll'],
+                'turbidity': raw_data['turbidity'],
+                'N': raw_data['nitrogen'],
+                'P': raw_data['phosphorus'],
+                'K': raw_data['potassium']
+            }
+            
+            model_features = ['temperature', 'humidity', 'soilMoisture', 'soilPH', 'chlorophyll', 'turbidity', 'N', 'P', 'K']
+            features_df = pd.DataFrame([input_data])[model_features]
 
-            features_df = pd.DataFrame([input_data])[feature_order]
-            prediction = float(model.predict(features_df)[0])
+            # Model 1: Yield Loss Prediction
+            loss_prediction = float(yield_loss_model.predict(features_df)[0])
+            
+            # Model 2: Plant Health Classification
+            health_idx = health_model.predict(features_df)[0]
+            health_status = health_encoder.inverse_transform([health_idx])[0]
+
+            # Model 3: Predicted Harvest Quantity
+            harvest_prediction = float(harvest_model.predict(features_df)[0])
             
             risk_level = "Low"
-            if prediction > 35: risk_level = "Critical"
-            elif prediction > 20: risk_level = "High"
-            elif prediction > 10: risk_level = "Medium"
+            if loss_prediction > 35: risk_level = "Critical"
+            elif loss_prediction > 20: risk_level = "High"
+            elif loss_prediction > 10: risk_level = "Medium"
 
-            # 4. Sync Everything Back to Firebase
+            # 4. Sync All 3 Predictions Back to Firebase
             now = int(time.time() * 1000)
             
-            # Yield info
+            # Prediction: Yield Loss
             db.reference('yieldPrediction').set({
-                'yieldLoss': prediction,
+                'yieldLoss': loss_prediction,
                 'riskLevel': risk_level,
                 'timestamp': now
             })
 
-            # Health Score
-            health = compute_farm_health(input_data, prediction)
-            db.reference('farmHealth').set(health)
+            # Prediction: Plant Health
+            db.reference('farmHealth').set({
+                'label': health_status,
+                'timestamp': now
+            })
 
-            # Active Alerts
-            alerts = generate_alerts(input_data)
-            db.reference('alerts').set(alerts if alerts else {})
+            # Prediction: Predicted Harvest
+            db.reference('harvestEstimate').set({
+                'expectedYield': harvest_prediction,
+                'timestamp': now
+            })
 
-            # Recommendations
-            recs = generate_recommendations(input_data, prediction, risk_level)
-            db.reference('recommendations').set(recs)
+            # History (Expanded with all 3 predictions)
+            db.reference('sensorHistory').push({
+                **input_data, 
+                'yieldLoss': loss_prediction, 
+                'healthStatus': health_status,
+                'expectedYield': harvest_prediction,
+                'timestamp': now
+            })
 
-            # History
-            db.reference('sensorHistory').push({**input_data, 'yieldLoss': prediction, 'timestamp': now})
-
-            print(f"[{time.strftime('%H:%M:%S')}] OK: Predicted {prediction:.2f}% (T:{input_data['temperature']} pH:{input_data['soilPH']})")
+            print(f"[{time.strftime('%H:%M:%S')}] OK: N:{raw_data['nitrogen']:.0f} P:{raw_data['phosphorus']:.0f} K:{raw_data['potassium']:.0f} | Loss {loss_prediction:.1f}% | Health: {health_status}")
 
         except Exception as e:
             error_msg = f"[{time.strftime('%H:%M:%S')}] SYNC ERROR: {e}"
