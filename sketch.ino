@@ -18,8 +18,7 @@
 #define PH_PIN 35          // Pot 2 (Soil pH)
 #define NITROGEN_PIN 36    // Pot 4 (Nitrogen Level)
 #define PHOSPHORUS_PIN 39  // Pot 5 (Phosphorus Level)
-#define POTASSIUM_PIN 32   // Wait, 32 is used. Let's use 4.
-#define POTASSIUM_PIN 4    // Pot 6 (Potassium Level)
+#define POTASSIUM_PIN 4    // Pot 6 (Potassium Level) — Note: GPIO 4 is ADC2, may read 0 with WiFi active
 
 // ─── DISPLAY ────────────────────────────────────────────────────────────────
 #define SCREEN_WIDTH 128
@@ -81,9 +80,15 @@ void loop() {
     float ph = (analogRead(PH_PIN) / 4095.0) * 14.0;
     float chlorophyll = (analogRead(CHLOROPHYLL_PIN) / 4095.0) * 100.0;
     float turbidity = (analogRead(TURBIDITY_PIN) / 4095.0) * 100.0;
-    float n = (analogRead(NITROGEN_PIN) / 4095.0) * 100.0;
-    float p = (analogRead(PHOSPHORUS_PIN) / 4095.0) * 100.0;
-    float k = (analogRead(POTASSIUM_PIN) / 4095.0) * 100.0;
+    float n_raw = (analogRead(NITROGEN_PIN) / 4095.0) * 100.0;
+    float p_raw = (analogRead(PHOSPHORUS_PIN) / 4095.0) * 100.0;
+    float k_raw = (analogRead(POTASSIUM_PIN) / 4095.0) * 100.0;
+    
+    // Scale NPK from potentiometer % (0-100) to training data ranges
+    // N: 10-200, P: 5-150, K: 10-250 (what the ML model expects)
+    float n = 10.0 + (n_raw / 100.0) * 190.0;   // 0%→10, 100%→200
+    float p = 5.0  + (p_raw / 100.0) * 145.0;    // 0%→5,  100%→150
+    float k = 10.0 + (k_raw / 100.0) * 240.0;    // 0%→10, 100%→250
 
     // 2. Read Temp/Hum from DHT22
     TempAndHumidity tah = dht.getTempAndHumidity();

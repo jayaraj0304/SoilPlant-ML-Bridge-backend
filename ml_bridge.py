@@ -284,6 +284,7 @@ def process_latest_data():
 
             # Model 1: Yield Loss Prediction
             loss_prediction = float(yield_loss_model.predict(features_df)[0])
+            loss_prediction = max(0.0, min(100.0, loss_prediction))  # Clamp to 0-100%
             
             # Model 2: Plant Health Classification
             health_idx = health_model.predict(features_df)[0]
