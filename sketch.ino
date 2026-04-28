@@ -16,6 +16,10 @@
 #define CHLOROPHYLL_PIN 33 // Pot 3 (Bio Mass/Chlorophyll)
 #define TURBIDITY_PIN 34   // Pot 1 (Microplast Conc/Turbidity)
 #define PH_PIN 35          // Pot 2 (Soil pH)
+#define NITROGEN_PIN 36    // Pot 4 (Nitrogen Level)
+#define PHOSPHORUS_PIN 39  // Pot 5 (Phosphorus Level)
+#define POTASSIUM_PIN 32   // Wait, 32 is used. Let's use 4.
+#define POTASSIUM_PIN 4    // Pot 6 (Potassium Level)
 
 // ─── DISPLAY ────────────────────────────────────────────────────────────────
 #define SCREEN_WIDTH 128
@@ -77,6 +81,9 @@ void loop() {
     float ph = (analogRead(PH_PIN) / 4095.0) * 14.0;
     float chlorophyll = (analogRead(CHLOROPHYLL_PIN) / 4095.0) * 100.0;
     float turbidity = (analogRead(TURBIDITY_PIN) / 4095.0) * 100.0;
+    float n = (analogRead(NITROGEN_PIN) / 4095.0) * 100.0;
+    float p = (analogRead(PHOSPHORUS_PIN) / 4095.0) * 100.0;
+    float k = (analogRead(POTASSIUM_PIN) / 4095.0) * 100.0;
 
     // 2. Read Temp/Hum from DHT22
     TempAndHumidity tah = dht.getTempAndHumidity();
@@ -91,6 +98,9 @@ void loop() {
     json += "\"soilPH\":" + String(ph, 1) + ",";
     json += "\"chlorophyll\":" + String(chlorophyll, 1) + ",";
     json += "\"turbidity\":" + String(turbidity, 1) + ",";
+    json += "\"nitrogen\":" + String(n, 1) + ",";
+    json += "\"phosphorus\":" + String(p, 1) + ",";
+    json += "\"potassium\":" + String(k, 1) + ",";
     json += "\"timestamp\":" + String(millis());
     json += "}";
 
@@ -168,7 +178,8 @@ void loop() {
     Serial.println("---- SENSOR DATA ----");
     Serial.print("Temp: "); Serial.print(temp, 1); Serial.print("C | Hum: "); Serial.print(hum, 1); Serial.println("%");
     Serial.print("Moisture: "); Serial.print(moisture, 1); Serial.print("% | pH: "); Serial.println(ph, 1);
-    Serial.print("Chlorophyll: "); Serial.print(chlorophyll, 1); Serial.print(" | Turbidity: "); Serial.println(turbidity, 1);
+    Serial.print("N: "); Serial.print(n, 1); Serial.print(" | P: "); Serial.print(p, 1); Serial.print(" | K: "); Serial.println(k, 1);
+    Serial.print("Chloro: "); Serial.print(chlorophyll, 1); Serial.print(" | Turbidity: "); Serial.println(turbidity, 1);
     Serial.println("Yield Loss: " + (yieldLossVal >= 0 ? String(yieldLossVal, 2) + "%" : "Pending..."));
     Serial.println("---------------------");
   }

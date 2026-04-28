@@ -236,7 +236,6 @@ def compute_farm_health(data, yield_loss):
     }
 
 # --- 7. ML PREDICTION + FULL SYNC LOGIC ---
-# --- 7. ML PREDICTION + FULL SYNC LOGIC ---
 
 def process_latest_data():
     """
@@ -308,17 +307,27 @@ def process_latest_data():
                 'timestamp': now
             })
 
-            # Prediction: Plant Health
-            db.reference('farmHealth').set({
-                'label': health_status,
-                'timestamp': now
-            })
+            # Prediction: Plant Health (with computed score for dashboard health circle)
+            health_data = compute_farm_health(input_data, loss_prediction)
+            health_data['label'] = health_status  # Use ML model's label, not threshold-based
+            db.reference('farmHealth').set(health_data)
 
             # Prediction: Predicted Harvest
             db.reference('harvestEstimate').set({
                 'expectedYield': harvest_prediction,
                 'timestamp': now
             })
+
+            # Generate and sync alerts
+            alerts = generate_alerts(input_data)
+            if alerts:
+                alerts_ref = db.reference('alerts')
+                for key, val in alerts.items():
+                    alerts_ref.child(key).set(val)
+
+            # Generate and sync recommendations
+            recs = generate_recommendations(input_data, loss_prediction, risk_level)
+            db.reference('recommendations').set(recs)
 
             # History (Expanded with all 3 predictions)
             db.reference('sensorHistory').push({
@@ -328,6 +337,17 @@ def process_latest_data():
                 'expectedYield': harvest_prediction,
                 'timestamp': now
             })
+
+            # Prune history to keep only the last 100 entries
+            try:
+                history_snapshot = db.reference('sensorHistory').order_by_key().get()
+                if history_snapshot and isinstance(history_snapshot, dict) and len(history_snapshot) > 100:
+                    keys = sorted(history_snapshot.keys())
+                    keys_to_delete = keys[:-100]
+                    for k in keys_to_delete:
+                        db.reference(f'sensorHistory/{k}').delete()
+            except Exception:
+                pass  # Non-critical: pruning failure shouldn't stop the pipeline
 
             print(f"[{time.strftime('%H:%M:%S')}] OK: N:{raw_data['nitrogen']:.0f} P:{raw_data['phosphorus']:.0f} K:{raw_data['potassium']:.0f} | Loss {loss_prediction:.1f}% | Health: {health_status}")
 
@@ -340,7 +360,7 @@ def process_latest_data():
             except:
                 pass
         
-        time.sleep(0.5) # Check every 0.5 seconds for instant feel!
+        time.sleep(5) # Check every 5 seconds — reliable without burning Firebase quota
 
 # --- 8. GLOBAL STARTUP ---
 # Start the polling logic as soon as the module is loaded (Critical for Render/Gunicorn)

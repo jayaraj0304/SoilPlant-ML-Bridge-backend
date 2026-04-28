@@ -56,7 +56,13 @@
       "top": 275.2,
       "left": 130.4,
       "attrs": { "i2cAddress": "0x3c" }
-    }
+    },
+    { "type": "wokwi-potentiometer", "id": "pot4", "top": 150, "left": -200, "attrs": { "label": "Nitrogen" } },
+    { "type": "wokwi-potentiometer", "id": "pot5", "top": 150, "left": -100, "attrs": { "label": "Phosphorus" } },
+    { "type": "wokwi-potentiometer", "id": "pot6", "top": 150, "left": 0, "attrs": { "label": "Potassium" } },
+    { "type": "wokwi-text", "id": "txt_n", "top": 130, "left": -200, "attrs": { "text": "Nitrogen (N)" } },
+    { "type": "wokwi-text", "id": "txt_p", "top": 130, "left": -100, "attrs": { "text": "Phosphorus (P)" } },
+    { "type": "wokwi-text", "id": "txt_k", "top": 130, "left": 0, "attrs": { "text": "Potassium (K)" } }
   ],
   "connections": [
     [ "esp:TX", "$serialMonitor:RX", "", [] ],
@@ -79,7 +85,16 @@
     [ "esp:5V", "oled1:VCC", "red", [ "h0" ] ],
     [ "oled1:GND", "esp:GND.2", "black", [ "h19.2", "v-240" ] ],
     [ "oled1:SDA", "esp:21", "green", [ "h-28.8", "v-249.4" ] ],
-    [ "oled1:SCL", "esp:22", "green", [ "h9.6", "v-287.7" ] ]
+    [ "oled1:SCL", "esp:22", "green", [ "h9.6", "v-287.7" ] ],
+    [ "pot4:GND", "esp:GND.1", "black", [] ],
+    [ "pot4:VCC", "esp:3V3", "red", [] ],
+    [ "pot4:SIG", "esp:36", "green", [] ],
+    [ "pot5:GND", "esp:GND.1", "black", [] ],
+    [ "pot5:VCC", "esp:3V3", "red", [] ],
+    [ "pot5:SIG", "esp:39", "green", [] ],
+    [ "pot6:GND", "esp:GND.1", "black", [] ],
+    [ "pot6:VCC", "esp:3V3", "red", [] ],
+    [ "pot6:SIG", "esp:4", "green", [] ]
   ],
   "dependencies": {}
 }
